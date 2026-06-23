@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Model weights and checkpoints (large binary files)
+finetuned/
+qwen35_finetuned/
+qwen35_finetuned_v3/
+qwen35_merged/
+qwen35_nocurriculum/
+groupA_a1/
+groupA_a2/
+groupA_a3/
+groupA_a3_merged/
+Qwen/
+output/
+epoch_results/
+epoch_results_v2/
+epoch_results_v3/
+epoch_results_nocurriculum/
+epoch_results_groupA_a1/
+epoch_results_groupA_a2/
+epoch_results_groupA_a3/
+
+# GGUF model files (large binaries)
+gguf/*.gguf
+
+# Evaluation results (regenerable)
+gguf_results/
+benchmark_results/
+dp_output/
+glm_output/
+ocr_outputs/
+qwen_output/
+your/
+
+# Dataset images (will be released upon paper acceptance)
+finetune_data/
+Products-Real/
+Products-Real.zip
+"Executorch test images"/
+
+# Logs and intermediate outputs
+*.log
+mismatches.json
+qwen_mismatches.json
+rerun_vulkan.sh
+run_gguf_eval.sh
+quantize_gguf.sh
+quantize_groupA.sh
+
+# Executorch / mobile exports
+*.pte
+mv2_vulkan.pte
+qwen3_5_combined.pte
+
+# Failure grid (images, regenerable)
+failure_grid/
+
+# Third-party subdirectories
+DeepSeek/
+GLM/
+export/
+next-ai-draw-io/
+
+# Misc
+.DS_Store
+*.zip
