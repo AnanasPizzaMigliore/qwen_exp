@@ -1,6 +1,6 @@
 # Expiration Date Recognition — Fine-tuning Code
 
-Code for fine-tuning and evaluating Qwen2.5-VL-0.8B on expiration date recognition from food packaging images.
+Code for fine-tuning and evaluating Qwen3.5-0.8B on expiration date recognition from food packaging images.
 
 ## Dataset
 
@@ -21,7 +21,7 @@ The image dataset will be released upon paper acceptance.
 | `merge_gguf.py` | Merge LLM GGUF + mmproj GGUF into a single unified file |
 | `compare_all.py` | Aggregate and compare accuracy across all models/backends |
 | `bootstrap_ci.py` | Bootstrap 95% confidence intervals on accuracy |
-| `qwen35_test_eval.py` | Zero-shot evaluation of base Qwen2.5-VL-0.8B |
+| `qwen35_test_eval.py` | Zero-shot evaluation of base Qwen3.5-0.8B |
 
 ## Requirements
 
