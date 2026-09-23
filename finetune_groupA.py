@@ -37,8 +37,11 @@ from peft import LoraConfig, get_peft_model, TaskType
 
 # ── Args ──────────────────────────────────────────────────────────────────────
 ap = argparse.ArgumentParser()
-ap.add_argument("--strategy", required=True, choices=["a0", "a1", "a2", "a3"],
-                help="a0=LLM-LoRA only  a1=+vision-LoRA  a2=+merger-full  a3=+both")
+ap.add_argument("--strategy", required=True,
+                choices=["a0", "a1", "a2", "a3", "a0p", "a1p", "a4"],
+                help="a0=LLM-LoRA only  a1=+vision-LoRA  a2=+merger-full  a3=+both  "
+                     "a0p/a1p=A0/A1 re-run at A3's parameter budget  "
+                     "a4=vision-LoRA only, LLM frozen")
 ap.add_argument("--epochs", type=int, default=10)
 args = ap.parse_args()
 
@@ -60,6 +63,13 @@ LORA_RANK      = 64          # identical to baseline
 LORA_ALPHA     = 64          # identical to baseline
 LORA_RANK_VIS  = 32          # half rank for vision encoder (smaller component)
 LORA_ALPHA_VIS = 32
+# Matched-budget arms. Measured trainable counts at the stock ranks are
+# A0 25.6M, A1 27.3M, A2 38.1M, A3 39.9M — the LLM adapter is 25.6M at r=64
+# (0.40M per rank) and the ViT adapter only 1.8M at r=32. A3 wins and is also
+# the largest, so a0p and a1p re-run A0 and A1 with the LLM rank raised until
+# each matches A3's ~39.9M. Same budget, different placement.
+LORA_RANK_MATCHED_A0 = 100   # a0p: LLM-only        -> ~40.0M
+LORA_RANK_MATCHED_A1 = 95    # a1p: LLM + ViT r=32  -> ~39.8M
 MAX_PX         = 1024 * 1024 # identical to baseline — 1 MP cap
 GEN_MAX_TOKENS = 2000        # identical to baseline
 
@@ -269,22 +279,37 @@ model = AutoModelForImageTextToText.from_pretrained(
 model.config.use_cache = False
 
 # ── Apply LoRA ────────────────────────────────────────────────────────────────
-if STRATEGY in ("a0", "a2"):
-    # A0 / A2: LLM LoRA only — identical config to finetune_nocurriculum.py baseline
+if STRATEGY in ("a0", "a2", "a0p"):
+    # A0 / A2: LLM LoRA only — identical config to finetune_nocurriculum.py baseline.
+    # A0': same shape, rank raised to sit at A3's parameter budget.
+    llm_r = LORA_RANK_MATCHED_A0 if STRATEGY == "a0p" else LORA_RANK
     lora_cfg = LoraConfig(
-        r=LORA_RANK, lora_alpha=LORA_ALPHA, lora_dropout=0.05,
+        r=llm_r, lora_alpha=llm_r, lora_dropout=0.05,
         bias="none", task_type=TaskType.CAUSAL_LM,
         target_modules=LLM_TARGET_MODULES,
     )
     model = get_peft_model(model, lora_cfg)
 
+elif STRATEGY == "a4":
+    # A4: vision encoder LoRA ONLY — the LLM stays frozen, so nothing in the
+    # decoder adapts. Gradients still reach the ViT because the image embeddings
+    # are scattered into inputs_embeds and carry requires_grad through the LLM.
+    lora_cfg = LoraConfig(
+        r=LORA_RANK_VIS, lora_alpha=LORA_ALPHA_VIS, lora_dropout=0.05,
+        bias="none", task_type=TaskType.CAUSAL_LM,
+        target_modules=VIS_TARGET_MODULES,
+    )
+    model = get_peft_model(model, lora_cfg)
+
 else:
-    # A1 / A3: LLM LoRA (r=64) + vision encoder LoRA (r=32).
+    # A1 / A3 / A1': LLM LoRA (r=64) + vision encoder LoRA.
     # rank_pattern applies a different r to layers whose name contains the key.
     # "attn.qkv" and "attn.proj" only exist in the vision encoder; LLM layers
     # (q_proj, k_proj, …) are not affected by these patterns.
+    # A1' keeps the ViT adapter at r=32 and raises the LLM rank to reach A3's budget.
+    llm_r = LORA_RANK_MATCHED_A1 if STRATEGY == "a1p" else LORA_RANK
     lora_cfg = LoraConfig(
-        r=LORA_RANK, lora_alpha=LORA_ALPHA, lora_dropout=0.05,
+        r=llm_r, lora_alpha=llm_r, lora_dropout=0.05,
         bias="none", task_type=TaskType.CAUSAL_LM,
         target_modules=LLM_TARGET_MODULES + VIS_TARGET_MODULES,
         rank_pattern={

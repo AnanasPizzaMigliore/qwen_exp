@@ -7,6 +7,11 @@ __pycache__/
 *.egg-info/
 
 # Model weights and checkpoints (large binary files)
+groupA_*/
+epoch_results*/
+phone_bench/bin/
+phone_bench/bundle/
+phone_bench/results*/
 finetuned/
 qwen35_finetuned/
 qwen35_finetuned_v3/
@@ -42,7 +47,7 @@ your/
 finetune_data/
 Products-Real/
 Products-Real.zip
-"Executorch test images"/
+Executorch test images/
 
 # Logs and intermediate outputs
 *.log

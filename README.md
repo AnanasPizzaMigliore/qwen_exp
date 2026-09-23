@@ -8,36 +8,57 @@ The image dataset will be released upon paper acceptance.
 
 ## Repository Structure
 
+### Training
 | File | Description |
 |------|-------------|
-| `finetune_qwen35.py` | Baseline fine-tuning (LLM only, A0 strategy) |
-| `finetune_groupA.py` | Group A curriculum fine-tuning (A1–A3 strategies) |
+| `finetune_qwen35.py` | Baseline fine-tuning (LLM LoRA only) |
+| `finetune_groupA.py` | Adaptation ablation. `--strategy`: `a0` LLM LoRA, `a1` + vision-encoder LoRA, `a2` + merger, `a3` + both, `a4` vision-encoder LoRA only (LLM frozen), `a0p`/`a1p` A0/A1 re-run at A3's parameter budget |
+| `run_s2_s3.sh` | Runs the matched-budget and encoder-only arms (`a0p`, `a1p`, `a4`) |
 | `prepare_finetune_data.py` | Build fine-tuning JSONL from annotated dataset |
-| `merge_lora.py` | Merge LoRA adapter into base model |
-| `merge_groupA.py` | Merge Group A LoRA adapter |
-| `eval_native.py` | Evaluate HuggingFace model (full precision) |
-| `eval_gguf.py` | Evaluate GGUF quantized model via llama-server |
-| `convert_to_gguf.py` | Convert fine-tuned model to GGUF (f16 + quantized) |
-| `merge_gguf.py` | Merge LLM GGUF + mmproj GGUF into a single unified file |
-| `compare_all.py` | Aggregate and compare accuracy across all models/backends |
-| `bootstrap_ci.py` | Bootstrap 95% confidence intervals on accuracy |
+| `merge_lora.py`, `merge_groupA.py` | Merge LoRA adapters into the base model |
+
+### Quantization and deployment
+| File | Description |
+|------|-------------|
+| `convert_to_gguf.py` | Convert a fine-tuned model to GGUF (F16 + quantized) |
+| `merge_gguf.py` | Merge LLM GGUF + mmproj GGUF into a single file (for apps that accept one file) |
+| `run_s1.sh` | Encoder/merger decomposition: quantizes only the vision encoder (`v.*`) or only the merger (`mm.*`) with `llama-quantize --tensor-type`, then evaluates |
+| `phone_bench/` | On-device benchmark over adb (see below) |
+
+### Evaluation and analysis
+| File | Description |
+|------|-------------|
 | `qwen35_test_eval.py` | Zero-shot evaluation of base Qwen3.5-0.8B |
+| `eval_native.py` | Evaluate a Hugging Face model (full precision) |
+| `eval_gguf.py` | Evaluate a GGUF model via llama-server (CPU or Vulkan) |
+| `eval_token_ablation.py` | Accuracy and latency vs. image-token budget |
+| `eval_tome.py` | Token merging (ToMe) on visual tokens, native pipeline |
+| `compare_all.py` | Aggregate accuracy across models and backends |
+| `bootstrap_ci.py` | Paired-bootstrap 95% CIs for the quantization comparisons |
+| `error_analysis.py` | Adaptation-ablation CIs, false-abstention rate, later-than-truth error rate |
+| `tag_mechanism.py` | Per-condition accuracy, F16 vs. quantized vision tower |
+| `tier_reconcile.py` | Per-tier (hard / non-hard) accuracy for every adaptation arm |
 
-## Requirements
+All statistics use seed 42 and 1,000 bootstrap resamples.
 
-```bash
-conda create -n llm python=3.13
-conda activate llm
-pip install torch transformers peft accelerate pillow numpy
-# For GGUF evaluation:
-# Build llama.cpp with Vulkan support — see https://github.com/ggerganov/llama.cpp
-```
+## Software versions
+
+| Component | Version |
+|-----------|---------|
+| Python | 3.13.13 |
+| PyTorch | 2.13.0.dev20260510+cu132 (nightly) |
+| Transformers | 5.8.0 |
+| PEFT | 0.19.1 |
+| Accelerate | 1.13.0 |
+| CUDA / cuDNN | 13.2 / 9.20 |
+| llama.cpp | commit `d05fe1d` (build 9010) |
+| Base model | [`Qwen/Qwen3.5-0.8B`](https://huggingface.co/Qwen/Qwen3.5-0.8B), Apache-2.0 |
 
 ## Usage
 
-### Fine-tune (A3 strategy)
+### Fine-tune
 ```bash
-python finetune_groupA.py
+python finetune_groupA.py --strategy a3
 ```
 
 ### Convert to GGUF
@@ -45,7 +66,7 @@ python finetune_groupA.py
 python convert_to_gguf.py
 ```
 
-### Evaluate GGUF (Vulkan backend)
+### Evaluate GGUF
 ```bash
 python eval_gguf.py \
   --model /path/to/model.gguf \
@@ -54,7 +75,12 @@ python eval_gguf.py \
   --output results.json
 ```
 
-### Merge LLM + mmproj into single GGUF (for mobile deployment)
+**Note on `--backend cpu`:** it keeps the LLM layers on the CPU (`--n-gpu-layers 0`), but llama.cpp's
+defaults still run the vision encoder and large prompt batches on a GPU if one is present
+(`--mmproj-offload` and `--op-offload` both default to on). For CPU-only timing, add
+`--no-mmproj-offload --no-op-offload` to the llama-server command.
+
+### Merge LLM + mmproj into a single GGUF
 ```bash
 python merge_gguf.py \
   --llm /path/to/llm.gguf \
@@ -62,15 +88,28 @@ python merge_gguf.py \
   --output /path/to/unified.gguf
 ```
 
-### Compute bootstrap CIs
+### Statistics
 ```bash
-python bootstrap_ci.py
+python bootstrap_ci.py       # quantization comparisons
+python error_analysis.py     # adaptation ablation + error analysis
+python tag_mechanism.py      # per-condition analysis
 ```
+
+### On-device benchmark (Android, adb)
+`phone_bench/build_android.sh` cross-compiles llama.cpp for Android arm64 with the NDK (CPU builds with and
+without `i8mm`, plus a Vulkan build). Then either:
+```bash
+python3 phone_bench/bench_phone.py --info     # device report
+python3 phone_bench/bench_phone.py            # full run: configs x token budgets, per-stage timings
+```
+or push the files and run single images by hand with `phone_bench/run_on_phone.sh` inside `adb shell`.
+The harness detects the Android emulator and labels its output as a functional test only: an emulator
+measures the host machine, not a phone.
 
 ## Results
 
 See `compare_all.py` for full accuracy tables across quantization levels and backends.
-Best configuration: A3 strategy, F16 mmproj + Q4_K_M LLM — **75.8% full-date accuracy** on the 545-image test set.
+Best GGUF configuration: A3 strategy, F16 mmproj + Q4_K_M LLM — **75.8% full-date accuracy** on the 545-image test set.
 
 ## Citation
 

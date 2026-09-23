@@ -2,15 +2,20 @@
 """
 Bootstrap 95% CIs on full-date accuracy for key A3 configurations.
 Resamples the 545 test images 1000x and reports mean ± CI.
+
+Reproducibility: all RNG uses np.random.default_rng(SEED=42).
 """
 import json
 import numpy as np
 from pathlib import Path
 from collections import defaultdict
 
-GT_FILE   = Path("/home/penghao/Dataset/expiration_dates_details_true.json")
-TEST_JSON = Path("/home/penghao/Dataset/test.json")
-GGUF_DIR  = Path("/home/penghao/qwen/gguf_results")
+SEED = 42   # fixed for reproducibility — all bootstrap draws use this seed
+
+GT_FILE        = Path("/home/penghao/Dataset/expiration_dates_details_true.json")
+TEST_JSON      = Path("/home/penghao/Dataset/test.json")
+GGUF_DIR       = Path("/home/penghao/qwen/gguf_results")
+ZEROSHOT_FILE  = Path("/home/penghao/Dataset/qwen35_test_results.json")
 
 gt_all     = {e["filename"]: e for e in json.load(open(GT_FILE))}
 test_files = [e["filename"] for e in json.load(open(TEST_JSON))]
@@ -51,7 +56,7 @@ def per_image_scores(results):
     return np.array(scores, dtype=float)
 
 def bootstrap_ci(scores, n_boot=1000, alpha=0.05, rng=None):
-    if rng is None: rng = np.random.default_rng(42)
+    if rng is None: rng = np.random.default_rng(SEED)
     mean = scores.mean() * 100
     boot = np.array([rng.choice(scores, size=len(scores), replace=True).mean()
                      for _ in range(n_boot)]) * 100
@@ -59,7 +64,7 @@ def bootstrap_ci(scores, n_boot=1000, alpha=0.05, rng=None):
     return mean, lo, hi
 
 def delta_ci(scores_a, scores_b, n_boot=1000, alpha=0.05, rng=None):
-    if rng is None: rng = np.random.default_rng(42)
+    if rng is None: rng = np.random.default_rng(SEED)
     diff = (scores_a - scores_b)
     observed = diff.mean() * 100
     idx = np.arange(len(scores_a))
@@ -72,11 +77,12 @@ def delta_ci(scores_a, scores_b, n_boot=1000, alpha=0.05, rng=None):
     p_val = (np.sum(boot_diffs <= 0) / n_boot) if observed > 0 else (np.sum(boot_diffs >= 0) / n_boot)
     return observed, lo, hi, p_val
 
-rng = np.random.default_rng(42)
+rng = np.random.default_rng(SEED)
 N_BOOT = 1000
 
 CONFIGS = [
-    # label, path
+    # label, path  (None = zero-shot, loaded separately)
+    ("Zero-shot base model",           None),
     ("A3 F16+F16 (baseline)",          "qwen35_groupA_a3_f16_cpu.json"),
     ("A3 F16+Q8_0",                    "qwen35_groupA_a3_Q8_0_cpu.json"),
     ("A3 F16+Q5_K_M",                  "qwen35_groupA_a3_Q5_K_M_cpu.json"),
@@ -85,38 +91,54 @@ CONFIGS = [
     ("A3 Q8_0+Q8_0",                   "qwen35_groupA_a3_Q8_0_mmQ8_0_cpu.json"),
     ("A3 Q5_K_M+Q5_K_M",               "qwen35_groupA_a3_Q5_K_M_mmQ5_K_M_cpu.json"),
     ("A3 Q4_K_M+Q4_K_M",               "qwen35_groupA_a3_Q4_K_M_mmQ4_K_M_cpu.json"),
+    ("A3 Q4_K_M mmproj + Q3_K_M LLM", "qwen35_groupA_a3_Q3_K_M_mmQ4_K_M_cpu.json"),
     ("A3 Q3_K_M+Q3_K_M  ← collapse",  "qwen35_groupA_a3_Q3_K_M_mmQ3_K_M_cpu.json"),
     ("A3 Q3_K_M mmproj + F16 LLM",    "qwen35_groupA_a3_f16_mmQ3_K_M_cpu.json"),
     ("A3 Q4_K_M mmproj + F16 LLM",    "qwen35_groupA_a3_f16_mmQ4_K_M_cpu.json"),
 ]
 
 print(f"\n{'='*78}")
-print(f"  Bootstrap 95% CIs  (n={N} images, {N_BOOT} resamples)")
+print(f"  Bootstrap 95% CIs  (n={N} images, {N_BOOT} resamples, seed={SEED})")
 print(f"{'='*78}")
-print(f"  {'Config':<38} {'ALL%':>6}  {'95% CI':>15}  {'±':>5}")
+print(f"  {'Config':<42} {'ALL%':>6}  {'95% CI':>15}  {'±':>5}")
 print(f"  {'-'*76}")
 
 scores_map = {}
 for label, fname in CONFIGS:
-    path = GGUF_DIR / fname
-    if not path.exists():
-        print(f"  {label:<38}  MISSING: {fname}")
-        continue
-    s = per_image_scores(load(path))
+    if fname is None:
+        # zero-shot base model
+        if not ZEROSHOT_FILE.exists():
+            print(f"  {label:<42}  MISSING: {ZEROSHOT_FILE}")
+            continue
+        s = per_image_scores(load(ZEROSHOT_FILE))
+    else:
+        path = GGUF_DIR / fname
+        if not path.exists():
+            print(f"  {label:<42}  MISSING: {fname}")
+            continue
+        s = per_image_scores(load(path))
     scores_map[label] = s
     mean, lo, hi = bootstrap_ci(s, N_BOOT, rng=rng)
     half = (hi - lo) / 2
-    print(f"  {label:<38} {mean:>6.1f}  [{lo:>5.1f}, {hi:>5.1f}]  ±{half:.1f}")
+    print(f"  {label:<42} {mean:>6.1f}  [{lo:>5.1f}, {hi:>5.1f}]  ±{half:.1f}")
 
 print(f"\n{'='*78}")
 print(f"  Pairwise delta tests (A vs B, observed diff, 95% CI of diff, p-value)")
 print(f"{'='*78}")
 
 PAIRS = [
+    # Adaptation gap: fine-tuned best vs zero-shot base
+    ("A3 Q4_K_M+Q4_K_M",          "Zero-shot base model",
+     "Adaptation gap: A3 Q4+Q4 vs zero-shot base"),
+    ("A3 F16+F16 (baseline)",      "Zero-shot base model",
+     "Adaptation gap: A3 F16+F16 vs zero-shot base"),
+    # Quantization comparisons
     ("A3 F16+Q4_K_M  ← best",    "A3 Q4_K_M+Q4_K_M",
      "F16 mmproj vs Q4 mmproj  (LLM fixed at Q4)"),
     ("A3 F16+F16 (baseline)",      "A3 F16+Q4_K_M  ← best",
      "F16 LLM vs Q4 LLM  (mmproj fixed at F16)"),
+    ("A3 Q4_K_M+Q4_K_M",         "A3 Q4_K_M mmproj + Q3_K_M LLM",
+     "Q4 LLM vs Q3 LLM  (mmproj fixed at Q4)"),
     ("A3 F16+Q4_K_M  ← best",    "A3 Q3_K_M+Q3_K_M  ← collapse",
      "Best Q4 vs Q3 collapse"),
     ("A3 Q3_K_M mmproj + F16 LLM","A3 F16+F16 (baseline)",
@@ -125,15 +147,15 @@ PAIRS = [
      "Q4 mmproj alone vs F16 baseline"),
 ]
 
-print(f"\n  {'Comparison':<48} {'Δ%':>6}  {'95% CI':>15}  {'p':>6}")
-print(f"  {'-'*76}")
+print(f"\n  {'Comparison':<52} {'Δ%':>6}  {'95% CI':>15}  {'p':>6}")
+print(f"  {'-'*82}")
 for a_label, b_label, desc in PAIRS:
     if a_label not in scores_map or b_label not in scores_map:
-        print(f"  {desc:<48}  (missing data)")
+        print(f"  {desc:<52}  (missing data)")
         continue
     obs, lo, hi, pv = delta_ci(scores_map[a_label], scores_map[b_label], N_BOOT, rng=rng)
     sig = "**" if pv < 0.05 else "  "
-    print(f"  {desc:<48} {obs:>+6.1f}  [{lo:>+5.1f}, {hi:>+5.1f}]  {pv:.3f}{sig}")
+    print(f"  {desc:<52} {obs:>+6.1f}  [{lo:>+5.1f}, {hi:>+5.1f}]  {pv:.3f}{sig}")
 
 print(f"\n  ** p < 0.05 (one-sided bootstrap)")
 print()
