@@ -22,7 +22,7 @@ The image dataset will be released upon paper acceptance.
 |------|-------------|
 | `convert_to_gguf.py` | Convert a fine-tuned model to GGUF (F16 + quantized) |
 | `merge_gguf.py` | Merge LLM GGUF + mmproj GGUF into a single file (for apps that accept one file) |
-| `run_s1.sh` | Encoder/merger decomposition: quantizes only the vision encoder (`v.*`) or only the merger (`mm.*`) with `llama-quantize --tensor-type`, then evaluates |
+| `run_s1.sh` | Encoder/merger decomposition: evaluates projectors in which only the vision encoder (`v.*`) or only the merger (`mm.*`) is quantized to Q3 |
 | `phone_bench/` | On-device benchmark over adb (see below) |
 
 ### Evaluation and analysis
@@ -109,7 +109,7 @@ measures the host machine, not a phone.
 ## Results
 
 See `compare_all.py` for full accuracy tables across quantization levels and backends.
-Best GGUF configuration: A3 strategy, F16 mmproj + Q4_K_M LLM — **75.8% full-date accuracy** on the 545-image test set.
+Highest observed GGUF accuracy: A3 strategy, F16 mmproj + Q4_K_M LLM — **75.8% full-date accuracy** on the 545-image test set. This is not significantly different from full precision (75.2%, p = 0.218); the paper reports every configuration rather than selecting one.
 
 ## Citation
 
