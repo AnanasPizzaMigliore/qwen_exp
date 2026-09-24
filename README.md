@@ -22,7 +22,9 @@ The image dataset will be released upon paper acceptance.
 |------|-------------|
 | `convert_to_gguf.py` | Convert a fine-tuned model to GGUF (F16 + quantized) |
 | `merge_gguf.py` | Merge LLM GGUF + mmproj GGUF into a single file (for apps that accept one file) |
-| `run_s1.sh` | Encoder/merger decomposition: evaluates projectors in which only the vision encoder (`v.*`) or only the merger (`mm.*`) is quantized to Q3 |
+| `run_s1.sh` | Vision-tower quantization: builds the projector sweep (Q8_0–Q3_K_M) and the encoder/merger decomposition (only `v.*` or only `mm.*` at Q3), then evaluates the decomposition arms. Its commands reproduce the paper's projector files byte-for-byte |
+| `eval_products_real.py` | Cross-dataset evaluation on the Products-Real evaluation split, same prompt and scoring |
+| `patches/` | Patch llama.cpp `d05fe1d` needs to convert Qwen3.5-0.8B (registers its tokenizer) |
 | `phone_bench/` | On-device benchmark over adb (see below) |
 
 ### Evaluation and analysis
@@ -62,7 +64,9 @@ python finetune_groupA.py --strategy a3
 ```
 
 ### Convert to GGUF
+At llama.cpp `d05fe1d`, `convert_hf_to_gguf.py` does not recognise the Qwen3.5-0.8B tokenizer. Apply the patch first:
 ```bash
+git -C /path/to/llama.cpp apply /path/to/this/repo/patches/llama.cpp-convert-qwen35-0.8b.patch
 python convert_to_gguf.py
 ```
 
