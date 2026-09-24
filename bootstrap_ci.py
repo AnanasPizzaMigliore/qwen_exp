@@ -15,7 +15,10 @@ SEED = 42   # fixed for reproducibility — all bootstrap draws use this seed
 GT_FILE        = Path("/home/penghao/Dataset/expiration_dates_details_true.json")
 TEST_JSON      = Path("/home/penghao/Dataset/test.json")
 GGUF_DIR       = Path("/home/penghao/qwen/gguf_results")
-ZEROSHOT_FILE  = Path("/home/penghao/Dataset/qwen35_test_results.json")
+# Zero-shot base model in the same GGUF / llama-server / full-resolution pipeline as every
+# other row here. (qwen35_test_results.json is the native 1024^2 run; comparing it with GGUF
+# rows mixes pipelines and inflated the adaptation gap by ~9 pp.)
+ZEROSHOT_FILE  = GGUF_DIR / "qwen35_base_f16_cpu.json"
 
 gt_all     = {e["filename"]: e for e in json.load(open(GT_FILE))}
 test_files = [e["filename"] for e in json.load(open(TEST_JSON))]

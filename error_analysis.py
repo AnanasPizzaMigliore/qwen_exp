@@ -49,6 +49,15 @@ PARAMS = {
 }
 
 # Deployed configuration, for the S5 error analysis.
+SAFETY_CONFIGS = [
+    ("F16 (F16 projector + F16 decoder)",
+     "/home/penghao/qwen/gguf_results/qwen35_groupA_a3_f16_cpu.json"),
+    ("whole-model Q4_K_M",
+     "/home/penghao/qwen/gguf_results/qwen35_groupA_a3_Q4_K_M_mmQ4_K_M_cpu.json"),
+    ("mixed (Q4_K_M projector + Q3_K_M decoder)",
+     "/home/penghao/qwen/gguf_results/qwen35_groupA_a3_Q3_K_M_mmQ4_K_M_cpu.json"),
+]
+
 DEPLOYED = ("A3 F16 mmproj + F16 decoder",
             "/home/penghao/qwen/gguf_results/qwen35_groupA_a3_f16_cpu.json")
 
@@ -128,50 +137,69 @@ def as_ordinal(y, m, dd):
 
 
 # ────────────────────────────── S5 ──────────────────────────────
-label, path = DEPLOYED
-res = load(path)
+def wilson(k, n, z=1.96):
+    """95% Wilson score interval for k successes in n trials, in percent."""
+    if n == 0:
+        return float("nan"), float("nan")
+    p = k / n
+    den = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / den
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / den
+    return (centre - half) * 100, (centre + half) * 100
 
-n_present = n_abstain = 0
-n_wrong = n_later = n_earlier = n_incomparable = 0
 
-for fn in test_files:
-    g, p = gt_all.get(fn), res.get(fn)
-    if not g or not p or not has_date(g):
-        continue
-    n_present += 1
-    if "error" in p or "parse_error" in p:
-        continue
-    if not has_date(p):
-        n_abstain += 1
-        continue
-    if is_correct(p, g):
-        continue
-    n_wrong += 1
-    po, go = as_ordinal(*ymd(p)), as_ordinal(*ymd(g))
-    if po is None or go is None:
-        n_incomparable += 1
-    elif po > go:
-        n_later += 1
-    elif po < go:
-        n_earlier += 1
-    else:
-        n_incomparable += 1   # same coarse date, differed on a null field
+def safety(res):
+    c = dict(absent=0, abstain_absent=0, present=0, false_abstain=0, parse_err=0,
+             wrong=0, later=0, earlier=0, incomparable=0)
+    for fn in test_files:
+        g, p = gt_all.get(fn), res.get(fn)
+        if not g or not p:
+            continue
+        parse_err = "error" in p or "parse_error" in p
+        if not has_date(g):
+            c["absent"] += 1
+            if not parse_err and not has_date(p):
+                c["abstain_absent"] += 1
+            continue
+        c["present"] += 1
+        if parse_err:
+            c["parse_err"] += 1
+            continue
+        if not has_date(p):
+            c["false_abstain"] += 1
+            continue
+        if is_correct(p, g):
+            continue
+        c["wrong"] += 1
+        po, go = as_ordinal(*ymd(p)), as_ordinal(*ymd(g))
+        if po is None or go is None:
+            c["incomparable"] += 1
+        elif po > go:
+            c["later"] += 1
+        elif po < go:
+            c["earlier"] += 1
+        else:
+            c["incomparable"] += 1   # same coarse date, differed on a null field
+    return c
 
-print(f"\n{'='*72}")
-print(f"  S5 — error analysis   ({label}, n={len(test_files)})")
-print(f"{'='*72}")
-print(f"  date-present images                        {n_present}")
-print(f"  false abstentions (returned all-null)      {n_abstain}"
-      f"   = {n_abstain/n_present*100:.1f}% of date-present")
-print(f"  wrong date-present predictions             {n_wrong}")
-if n_wrong:
-    print(f"    predicted LATER than truth               {n_later}"
-          f"   = {n_later/n_wrong*100:.1f}% of errors   <-- safety-relevant")
-    print(f"    predicted EARLIER than truth             {n_earlier}"
-          f"   = {n_earlier/n_wrong*100:.1f}% of errors")
-    print(f"    not orderable (missing field)            {n_incomparable}")
-    print(f"\n  later-date errors as a share of all date-present images:"
-          f"  {n_later/n_present*100:.1f}%")
+
+def rate(k, n):
+    lo, hi = wilson(k, n)
+    return f"{k:>3}/{n:<3} {k/n*100:5.1f}%  [{lo:4.1f}, {hi:4.1f}]"
+
+
+print(f"\n{'='*100}")
+print(f"  S5 — safety metrics per configuration   (n={len(test_files)}; 95% Wilson intervals)")
+print(f"{'='*100}")
+for label, path in SAFETY_CONFIGS:
+    c = safety(load(path))
+    print(f"\n  {label}")
+    print(f"    abstains on date-absent images          {rate(c['abstain_absent'], c['absent'])}")
+    print(f"    false abstention on dated images        {rate(c['false_abstain'], c['present'])}")
+    print(f"    later than printed, among wrong answers {rate(c['later'], c['wrong'])}")
+    print(f"    later than printed, among dated images  {rate(c['later'], c['present'])}")
+    print(f"    (wrong answers: {c['wrong']} = {c['later']} later + {c['earlier']} earlier"
+          f" + {c['incomparable']} not orderable; parse errors on dated images: {c['parse_err']})")
 
 # ────────────────────────────── S6 ──────────────────────────────
 print(f"\n{'='*72}")
