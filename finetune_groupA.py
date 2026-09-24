@@ -42,10 +42,21 @@ ap.add_argument("--strategy", required=True,
                 help="a0=LLM-LoRA only  a1=+vision-LoRA  a2=+merger-full  a3=+both  "
                      "a0p/a1p=A0/A1 re-run at A3's parameter budget  "
                      "a4=vision-LoRA only, LLM frozen")
-ap.add_argument("--epochs", type=int, default=10)
+ap.add_argument("--epochs", type=float, default=10)
+ap.add_argument("--seed", type=int, default=None,
+                help="seed everything before the adapters are created; outputs get an _s<seed> "
+                     "suffix. Without it the script behaves as in the original runs (Trainer's "
+                     "default seed 42, which is applied only after adapter initialisation)")
+ap.add_argument("--no-test-eval", action="store_true",
+                help="do not touch the test split during training; score it once after the "
+                     "final epoch instead")
 args = ap.parse_args()
 
 STRATEGY = args.strategy
+SUFFIX = f"_s{args.seed}" if args.seed is not None else ""
+if args.seed is not None:
+    from transformers import set_seed
+    set_seed(args.seed)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MODEL_PATH   = "/home/penghao/qwen/Qwen/Qwen3.5-0.8B"
@@ -53,8 +64,8 @@ TRAIN_FOLDER = "/home/penghao/Dataset/train/"
 TRAIN_JSON   = "/home/penghao/Dataset/train.json"
 TEST_FOLDER  = "/home/penghao/Dataset/test/"
 TEST_JSON    = "/home/penghao/Dataset/test.json"
-OUTPUT_DIR   = f"/home/penghao/qwen/groupA_{STRATEGY}/"
-EVAL_OUTPUT  = f"/home/penghao/qwen/epoch_results_groupA_{STRATEGY}/"
+OUTPUT_DIR   = f"/home/penghao/qwen/groupA_{STRATEGY}{SUFFIX}/"
+EVAL_OUTPUT  = f"/home/penghao/qwen/epoch_results_groupA_{STRATEGY}{SUFFIX}/"
 
 TOTAL_EPOCHS   = args.epochs
 GRAD_ACCUM     = 16          # identical to baseline
@@ -361,16 +372,21 @@ training_args = TrainingArguments(
     dataloader_num_workers=0,
     remove_unused_columns=False,
     report_to="none",
+    **({"seed": args.seed} if args.seed is not None else {}),
 )
 
+test_eval = TestEvalCallback(model, processor)
 trainer = RobustTrainer(
     model=model,
     args=training_args,
     train_dataset=dataset,
     data_collator=collate_fn,
-    callbacks=[TestEvalCallback(model, processor)],
+    callbacks=[] if args.no_test_eval else [test_eval],
 )
 trainer.train()
+if args.no_test_eval:
+    # The only look at the test split: once, after the last epoch, with the same code path.
+    test_eval.on_epoch_end(training_args, trainer.state, None, model=model)
 
 model.save_pretrained(OUTPUT_DIR)
 processor.save_pretrained(OUTPUT_DIR)
